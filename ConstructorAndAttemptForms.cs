@@ -183,11 +183,18 @@ public sealed class AttemptPlayerForm : Form
         cmd.Parameters.AddWithValue("@id", _attemptId); cmd.Parameters.AddWithValue("@u", _user.Id);
         using var r = cmd.ExecuteReader(); if (!r.Read()) { Close(); return; }
         _snap = JsonDocument.Parse(r.GetString(0)); _endsAt = DateTime.Parse(r.GetString(1));
+        var status = r.GetString(2);
+        if (_reviewMode && string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Нельзя просматривать активную попытку до завершения.");
+            Close();
+            return;
+        }
         _title.Text = _snap.RootElement.GetProperty("title").GetString() ?? "";
         var arr = _snap.RootElement.GetProperty("questions").EnumerateArray().ToArray();
         _qList.Items.Clear(); for (var i = 0; i < arr.Length; i++) _qList.Items.Add($"Q{i + 1}");
         if (_qList.Items.Count > 0) _qList.SelectedIndex = 0;
-        if (!_reviewMode && r.GetString(2) == "Active") _tick.Start();
+        if (!_reviewMode && status == "Active") _tick.Start();
     }
 
     private int CurrentIndex() => _qList.SelectedIndex < 0 ? 0 : _qList.SelectedIndex;

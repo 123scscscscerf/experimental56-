@@ -217,8 +217,73 @@ public sealed class TeacherTestsPanel : UserControl
         LoadData();
     }
     private long Id() => _grid.CurrentRow is null ? 0 : Convert.ToInt64(_grid.CurrentRow.Cells[0].Value);
+    private static long LastInsertId(SqliteConnection c)
+    {
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT last_insert_rowid()";
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
     private void LoadData() => _grid.DataSource = DataAccess.Table("SELECT Id,Title,Status,PassPercent FROM Tests WHERE CreatedByTeacherId=@u ORDER BY Id DESC", ("@u", _user.Id));
-    private void Clone() { var id = Id(); if (id == 0) return; DataAccess.Execute("INSERT INTO Tests(Title,Description,CreatedByTeacherId,Status,PassPercent,CreatedAt) SELECT Title||' (Clone)',Description,CreatedByTeacherId,'Draft',PassPercent,@at FROM Tests WHERE Id=@id", ("@id", id), ("@at", DateTime.UtcNow.ToString("O"))); LoadData(); }
+    private void Clone()
+    {
+        var sourceTestId = Id();
+        if (sourceTestId == 0) return;
+
+        using var c = Database.Open();
+        using var tx = c.BeginTransaction();
+        try
+        {
+            using var cloneTest = c.CreateCommand();
+            cloneTest.Transaction = tx;
+            cloneTest.CommandText = "INSERT INTO Tests(Title,Description,CreatedByTeacherId,Status,PassPercent,CreatedAt) SELECT Title||' (Clone)',Description,CreatedByTeacherId,'Draft',PassPercent,@at FROM Tests WHERE Id=@id";
+            cloneTest.Parameters.AddWithValue("@id", sourceTestId);
+            cloneTest.Parameters.AddWithValue("@at", DateTime.UtcNow.ToString("O"));
+            if (cloneTest.ExecuteNonQuery() == 0) throw new Exception("Тест не найден");
+
+            var clonedTestId = LastInsertId(c);
+            using var q = c.CreateCommand();
+            q.Transaction = tx;
+            q.CommandText = "SELECT Id,Type,Text,Points,SettingsJson FROM Questions WHERE TestId=@testId ORDER BY Id";
+            q.Parameters.AddWithValue("@testId", sourceTestId);
+            using var qr = q.ExecuteReader();
+
+            while (qr.Read())
+            {
+                var sourceQuestionId = qr.GetInt64(0);
+                var type = qr.GetString(1);
+                var text = qr.GetString(2);
+                var points = qr.GetDouble(3);
+                var settings = qr.GetString(4);
+
+                using var insQ = c.CreateCommand();
+                insQ.Transaction = tx;
+                insQ.CommandText = "INSERT INTO Questions(TestId,Type,Text,Points,SettingsJson) VALUES(@t,@type,@text,@points,@settings)";
+                insQ.Parameters.AddWithValue("@t", clonedTestId);
+                insQ.Parameters.AddWithValue("@type", type);
+                insQ.Parameters.AddWithValue("@text", text);
+                insQ.Parameters.AddWithValue("@points", points);
+                insQ.Parameters.AddWithValue("@settings", settings);
+                insQ.ExecuteNonQuery();
+                var clonedQuestionId = LastInsertId(c);
+
+                using var insOpt = c.CreateCommand();
+                insOpt.Transaction = tx;
+                insOpt.CommandText = "INSERT INTO Options(QuestionId,Text,IsCorrect,SortOrder) SELECT @newQuestionId,Text,IsCorrect,SortOrder FROM Options WHERE QuestionId=@sourceQuestionId ORDER BY SortOrder,Id";
+                insOpt.Parameters.AddWithValue("@newQuestionId", clonedQuestionId);
+                insOpt.Parameters.AddWithValue("@sourceQuestionId", sourceQuestionId);
+                insOpt.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            Audit.Log(_user.Id, "CloneTest", "Test", clonedTestId, new { sourceTestId });
+            LoadData();
+        }
+        catch (Exception ex)
+        {
+            tx.Rollback();
+            MessageBox.Show(ex.Message);
+        }
+    }
 }
 
 public sealed class ConstructorPanel : UserControl
@@ -399,7 +464,17 @@ public sealed class StudentAttemptsPanel : UserControl
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Title", HeaderText = "Test", Width = 240 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Status", HeaderText = "Status" });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Percent", HeaderText = "%" });
-        rev.Click += (_, _) => { if (_grid.CurrentRow is null) return; using var f = new AttemptPlayerForm(_user, Convert.ToInt64(_grid.CurrentRow.Cells[0].Value), true); f.ShowDialog(); };
+        rev.Click += (_, _) =>
+        {
+            if (_grid.CurrentRow is null) return;
+            if (string.Equals(_grid.CurrentRow.Cells[2].Value?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Нельзя просматривать активную попытку до завершения.");
+                return;
+            }
+            using var f = new AttemptPlayerForm(_user, Convert.ToInt64(_grid.CurrentRow.Cells[0].Value), true);
+            f.ShowDialog();
+        };
         Controls.Add(_grid); Controls.Add(top); LoadData();
     }
     private void LoadData() => _grid.DataSource = DataAccess.Table("SELECT a.Id,t.Title,a.Status,IFNULL(ar.Percent,'') Percent FROM Attempts a JOIN Assignments ass ON ass.Id=a.AssignmentId JOIN Tests t ON t.Id=ass.TestId LEFT JOIN AttemptResults ar ON ar.AttemptId=a.Id WHERE a.UserId=@u ORDER BY a.Id DESC", ("@u", _user.Id));
