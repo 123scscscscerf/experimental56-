@@ -60,7 +60,7 @@ public sealed class MainShellForm : Form
         {
             Add("Tests", () => Open(new TeacherTestsPanel(_user)));
             Add("Assignments", () => Open(new TeacherAssignmentsPanel(_user)));
-            Add("Results", () => Open(new TeacherResultsPanel()));
+            Add("Results", () => Open(new TeacherResultsPanel(_user)));
             Add("Constructor", () => Open(new ConstructorPanel(_user)));
         }
         if (_user.Role == UserRole.Student)
@@ -274,7 +274,7 @@ public sealed class TeacherAssignmentsPanel : UserControl
 
 public sealed class TeacherResultsPanel : UserControl
 {
-    public TeacherResultsPanel()
+    public TeacherResultsPanel(SessionUser user)
     {
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46 };
         var export = AppTheme.FlatButton("Export CSV");
@@ -283,7 +283,7 @@ public sealed class TeacherResultsPanel : UserControl
         grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Student", HeaderText = "Student", Width = 150 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Title", HeaderText = "Test", Width = 220 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Percent", HeaderText = "%" });
-        grid.DataSource = DataAccess.Table("SELECT ar.AttemptId,u.Login Student,t.Title,ar.Percent FROM AttemptResults ar JOIN Attempts a ON a.Id=ar.AttemptId JOIN Users u ON u.Id=a.UserId JOIN Assignments ass ON ass.Id=a.AssignmentId JOIN Tests t ON t.Id=ass.TestId ORDER BY ar.AttemptId DESC");
+        grid.DataSource = DataAccess.Table("SELECT ar.AttemptId,u.Login Student,t.Title,ar.Percent FROM AttemptResults ar JOIN Attempts a ON a.Id=ar.AttemptId JOIN Users u ON u.Id=a.UserId JOIN Assignments ass ON ass.Id=a.AssignmentId JOIN Tests t ON t.Id=ass.TestId WHERE t.CreatedByTeacherId=@u ORDER BY ar.AttemptId DESC", ("@u", user.Id));
         export.Click += (_, _) =>
         {
             var dt = (DataTable)grid.DataSource;
@@ -392,7 +392,15 @@ public sealed class StudentAttemptsPanel : UserControl
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Title", HeaderText = "Test", Width = 240 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Status", HeaderText = "Status" });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Percent", HeaderText = "%" });
-        rev.Click += (_, _) => { if (_grid.CurrentRow is null) return; using var f = new AttemptPlayerForm(_user, Convert.ToInt64(_grid.CurrentRow.Cells[0].Value), true); f.ShowDialog(); };
+        rev.Click += (_, _) =>
+        {
+            if (_grid.CurrentRow is null) return;
+            var status = Convert.ToString(_grid.CurrentRow.Cells[2].Value) ?? string.Empty;
+            var reviewMode = !string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase);
+            using var f = new AttemptPlayerForm(_user, Convert.ToInt64(_grid.CurrentRow.Cells[0].Value), reviewMode);
+            f.ShowDialog();
+            LoadData();
+        };
         Controls.Add(_grid); Controls.Add(top); LoadData();
     }
     private void LoadData() => _grid.DataSource = DataAccess.Table("SELECT a.Id,t.Title,a.Status,IFNULL(ar.Percent,'') Percent FROM Attempts a JOIN Assignments ass ON ass.Id=a.AssignmentId JOIN Tests t ON t.Id=ass.TestId LEFT JOIN AttemptResults ar ON ar.AttemptId=a.Id WHERE a.UserId=@u ORDER BY a.Id DESC", ("@u", _user.Id));

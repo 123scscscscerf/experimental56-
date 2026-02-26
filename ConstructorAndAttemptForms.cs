@@ -108,6 +108,7 @@ public sealed class ConstructorForm : Form
 
     private void AddQuestion()
     {
+        if (!EnsureEditableTest()) return;
         if (!ValidateEditor()) return;
         if (_type.Text == "SingleChoice")
         {
@@ -121,7 +122,14 @@ public sealed class ConstructorForm : Form
         LoadQuestions();
     }
 
-    private void DeleteQuestion() { var qid = CurrentQId(); if (qid == 0) return; DataAccess.Execute("DELETE FROM Questions WHERE Id=@id", ("@id", qid)); LoadQuestions(); }
+    private void DeleteQuestion()
+    {
+        if (!EnsureEditableTest()) return;
+        var qid = CurrentQId();
+        if (qid == 0) return;
+        DataAccess.Execute("DELETE FROM Questions WHERE Id=@id", ("@id", qid));
+        LoadQuestions();
+    }
     private void Move(int dir) { }
 
     private void SaveDraft()
@@ -132,6 +140,17 @@ public sealed class ConstructorForm : Form
         MessageBox.Show("Saved");
     }
 
+
+    private bool EnsureEditableTest()
+    {
+        var status = DataAccess.Scalar<string>("SELECT Status FROM Tests WHERE Id=@id", ("@id", _testId!.Value)) ?? "";
+        if (status == "Published")
+        {
+            MessageBox.Show("Published тест не редактируется. Используйте Clone.");
+            return false;
+        }
+        return true;
+    }
     private bool ValidateEditor()
     {
         if (string.IsNullOrWhiteSpace(_qText.Text)) return false;
