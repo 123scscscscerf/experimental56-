@@ -335,8 +335,16 @@ WHERE a.IsActive=1 AND t.Status='Published' AND ((a.TargetType='User' AND a.Targ
         try
         {
             using var chk = c.CreateCommand(); chk.Transaction = tx;
-            chk.CommandText = "SELECT a.TestId,a.AttemptLimit,a.TimeLimitMinutes,a.ShuffleQuestions,a.ShuffleOptions,t.Title,t.PassPercent,a.Deadline,a.AvailableFrom,a.ShowScoreAfter,a.ShowCorrectAfter FROM Assignments a JOIN Tests t ON t.Id=a.TestId WHERE a.Id=@id AND a.IsActive=1 AND t.Status='Published'";
+            chk.CommandText = @"SELECT a.TestId,a.AttemptLimit,a.TimeLimitMinutes,a.ShuffleQuestions,a.ShuffleOptions,t.Title,t.PassPercent,a.Deadline,a.AvailableFrom,a.ShowScoreAfter,a.ShowCorrectAfter
+FROM Assignments a
+JOIN Tests t ON t.Id=a.TestId
+LEFT JOIN GroupMembers gm ON gm.GroupId=a.TargetId AND a.TargetType='Group'
+WHERE a.Id=@id
+  AND a.IsActive=1
+  AND t.Status='Published'
+  AND ((a.TargetType='User' AND a.TargetId=@u) OR (a.TargetType='Group' AND gm.UserId=@u))";
             chk.Parameters.AddWithValue("@id", assignmentId);
+            chk.Parameters.AddWithValue("@u", _user.Id);
             using var rd = chk.ExecuteReader(); if (!rd.Read()) throw new Exception("Недоступно");
             var testId = rd.GetInt64(0); var limit = rd.GetInt64(1); var tl = rd.GetInt64(2); var shuffleQ = rd.GetInt64(3) == 1; var shuffleO = rd.GetInt64(4) == 1;
             var title = rd.GetString(5); var pass = rd.GetDouble(6); var deadline = DateTime.Parse(rd.GetString(7)); var from = DateTime.Parse(rd.GetString(8));
